@@ -1,0 +1,107 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Lets GitHub Actions in one repository deploy the portfolio stack without stored AWS keys
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Default: Dubai-lab/portfolio
+    Description: owner/name of the repository allowed to deploy
+  AppStackName:
+    Type: String
+    Default: portfolio-crc
+    Description: Name of the application stack the role may deploy
+
+Resources:
+  # Tells AWS to trust login tokens issued by GitHub Actions.
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+
+  # The role a workflow run takes on. Only the main branch of the one repository can use it.
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: github-actions-portfolio-deploy
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOidcProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubRepo}:ref:refs/heads/main
+      Policies:
+        - PolicyName: deploy-portfolio-stack
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: ManageAppStack
+                Effect: Allow
+                Action: cloudformation:*
+                Resource:
+                  - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AppStackName}/*
+                  - !Sub arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/aws-sam-cli-managed-default/*
+                  - !Sub arn:aws:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31
+              - Sid: ReadTemplates
+                Effect: Allow
+                Action:
+                  - cloudformation:ValidateTemplate
+                  - cloudformation:GetTemplateSummary
+                Resource: '*'
+              - Sid: SiteAndArtifactBuckets
+                Effect: Allow
+                Action: s3:*
+                Resource:
+                  - !Sub arn:aws:s3:::${AppStackName}-*
+                  - arn:aws:s3:::aws-sam-cli-managed-default-*
+              - Sid: Cdn
+                Effect: Allow
+                Action: cloudfront:*
+                Resource: !Sub arn:aws:cloudfront::${AWS::AccountId}:*
+              - Sid: CounterTable
+                Effect: Allow
+                Action: dynamodb:*
+                Resource: !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${AppStackName}-*
+              - Sid: CounterFunction
+                Effect: Allow
+                Action: lambda:*
+                Resource: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${AppStackName}-*
+              - Sid: CounterApi
+                Effect: Allow
+                Action: apigateway:*
+                Resource: !Sub arn:aws:apigateway:${AWS::Region}::/*
+              - Sid: Logs
+                Effect: Allow
+                Action: logs:*
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${AppStackName}-*
+              - Sid: ListLogGroups
+                Effect: Allow
+                Action: logs:DescribeLogGroups
+                Resource: '*'
+              - Sid: FunctionRoles
+                Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:PassRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:GetRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                Resource: !Sub arn:aws:iam::${AWS::AccountId}:role/${AppStackName}-*
+
+Outputs:
+  DeployRoleArn:
+    Description: Role ARN the GitHub Actions workflow assumes
+    Value: !GetAtt DeployRole.Arn
