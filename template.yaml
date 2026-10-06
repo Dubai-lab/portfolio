@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Portfolio site (Cloud Resume Challenge) - S3 + CloudFront hosting
+Description: Portfolio site (Cloud Resume Challenge) - S3 + CloudFront hosting and visitor counter API
 
 Resources:
   # Private bucket that stores the website files. Nobody can read it directly.
@@ -74,6 +74,68 @@ Resources:
               StringEquals:
                 AWS:SourceArn: !Sub arn:aws:cloudfront::${AWS::AccountId}:distribution/${SiteDistribution}
 
+  # Holds a single item: the visitor count. 1 read/1 write unit is inside the always-free tier.
+  VisitsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      BillingMode: PROVISIONED
+      ProvisionedThroughput:
+        ReadCapacityUnits: 1
+        WriteCapacityUnits: 1
+
+  # Public URL for the counter. Only the site's own addresses may call it from a browser.
+  CounterApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins:
+          - !Sub https://${SiteDistribution.DomainName}
+          - https://portfolio-pied-beta-46.vercel.app
+        AllowMethods: [POST]
+      DefaultRouteSettings:
+        ThrottlingRateLimit: 5
+        ThrottlingBurstLimit: 10
+
+  # Adds 1 to the count and returns the new total.
+  CounterFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/counter/
+      Handler: app.lambda_handler
+      Runtime: python3.13
+      Architectures: [arm64]
+      MemorySize: 128
+      Timeout: 5
+      LoggingConfig:
+        LogGroup: !Ref CounterLogGroup
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref VisitsTable
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt VisitsTable.Arn
+      Events:
+        CountVisit:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref CounterApi
+            Path: /visits
+            Method: POST
+
+  CounterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 14
+
 Outputs:
   SiteBucketName:
     Description: Bucket the website files are uploaded to
@@ -84,3 +146,6 @@ Outputs:
   SiteUrl:
     Description: Public HTTPS address of the site
     Value: !Sub https://${SiteDistribution.DomainName}
+  CounterApiUrl:
+    Description: URL the site calls to count a visit (POST)
+    Value: !Sub https://${CounterApi}.execute-api.${AWS::Region}.amazonaws.com/visits
