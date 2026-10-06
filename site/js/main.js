@@ -10,6 +10,8 @@
       '<svg viewBox="0 0 120 120" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round"><path d="M30 44a36 36 0 0 1 60 0"/><path d="M22 66a38 38 0 0 1 8-10M90 56a38 38 0 0 1 8 22c0 8-1 15-3 22"/><path d="M36 96c4-8 6-18 6-30a18 18 0 0 1 36 0c0 14-2 26-7 38"/><path d="M52 106c4-10 8-22 8-40"/><path d="M26 82c2-5 3-10 3-16a31 31 0 0 1 52-23"/></svg>',
   };
 
+  const VISITS_API = 'https://2zf3eccymh.execute-api.eu-north-1.amazonaws.com/visits';
+
   const host = (url) => url.replace(/^https?:\/\//, '').replace(/\/$/, '');
 
   function terminalVisual() {
@@ -102,6 +104,16 @@
       if (!user || typeof user.public_repos !== 'number') return;
       document.getElementById('repo-count').textContent = user.public_repos;
       document.getElementById('repo-count-2').textContent = user.public_repos;
+    })
+    .catch(() => {});
+
+  // Visitor counter (API Gateway + Lambda + DynamoDB); stays hidden if the call fails.
+  fetch(VISITS_API, { method: 'POST' })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => {
+      if (!data || typeof data.visits !== 'number') return;
+      document.getElementById('visit-count').textContent = data.visits.toLocaleString();
+      document.getElementById('visitors').hidden = false;
     })
     .catch(() => {});
 
